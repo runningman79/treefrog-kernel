@@ -1,0 +1,173 @@
+/dts-v1/;
+
+/include/ "skeleton.dtsi"
+/include/ "rack_controller.dtsi"
+
+/ {
+  amba {
+	logicvc1: logicvc@43D10000 {
+		compatible = "xylon,logicvc-4.00.a";
+		reg = <0x43D10000 0x6000>;
+		interrupt-parent = <&intc>;
+		interrupts = < 0 36 4 >;
+
+		background-layer-bits-per-pixel = <32>;
+		background-layer-type = "rgb";
+		readable-regs;
+		size-position;
+		pixel-stride = <512>;
+
+		layer_0 {
+			//address = <0x3E000000>;
+			//buffer-offset = <1024>;
+			bits-per-pixel = <32>;
+			type = "rgb";
+			transparency = "layer";
+		};
+
+		display-timings {
+				320x240 {
+					hactive = <320>;
+					vactive = <240>;
+					clock-frequency = <30000000>;
+					hfront-porch = <200>;
+					hback-porch = <200>;
+					hsync-len = <5>;
+					vfront-porch = <200>;
+					vback-porch = <200>;
+					vsync-len = <50>;
+					};
+				};
+		};
+
+	xylon_fb@1 {
+		 compatible = "xylon,fb-3.00.a";
+		 device = <&logicvc1>;
+		 //video-mode = "320x240";
+	} ;
+
+	logicvc2: logicvc@43D20000 {
+		compatible = "xylon,logicvc-4.00.a";
+		reg = <0x43D20000 0x6000>;
+		interrupt-parent = <&intc>;
+		interrupts = < 0 33 4 >;
+
+		background-layer-bits-per-pixel = <32>;
+		background-layer-type = "rgb";
+		readable-regs;
+		size-position;
+		pixel-stride = <512>;
+
+		layer_0 {
+			//address = <0x3E800000>;
+			//buffer-offset = <1024>;
+			bits-per-pixel = <32>;
+			type = "rgb";
+			transparency = "layer";
+		};
+
+		display-timings {
+				320x240 {
+					hactive = <320>;
+					vactive = <240>;
+					clock-frequency = <30000000>;
+					hfront-porch = <200>;
+					hback-porch = <200>;
+					hsync-len = <5>;
+					vfront-porch = <200>;
+					vback-porch = <200>;
+					vsync-len = <50>;
+					};
+				};
+		};
+
+	xylon_fb@2 {
+		 compatible = "xylon,fb-3.00.a";
+		 device = <&logicvc2>;
+		 //video-mode = "320x240";
+	} ;
+
+	logicvc3: logicvc@43D30000 {
+		compatible = "xylon,logicvc-4.00.a";
+		reg = <0x43D30000 0x6000>;
+		interrupt-parent = <&intc>;
+		interrupts = < 0 54 4 >;
+
+		background-layer-bits-per-pixel = <32>;
+		background-layer-type = "rgb";
+		readable-regs;
+		size-position;
+		pixel-stride = <512>;
+
+		layer_0 {
+			//address = <0x3F000000>;
+	  		//buffer-offset = <1024>;
+			bits-per-pixel = <32>;
+			type = "rgb";
+			transparency = "layer";
+		};
+
+		display-timings {
+				320x240 {
+					hactive = <320>;
+					vactive = <240>;
+					clock-frequency = <30000000>;
+					hfront-porch = <200>;
+					hback-porch = <200>;
+					hsync-len = <5>;
+					vfront-porch = <200>;
+					vback-porch = <200>;
+					vsync-len = <50>;
+					};
+				};
+		};
+
+	xylon_fb@3 {
+		 compatible = "xylon,fb-3.00.a";
+		 device = <&logicvc3>;
+		 //video-mode = "320x240";
+	} ;
+
+	logicvc4: logicvc@43D40000 {
+		compatible = "xylon,logicvc-4.00.a";
+		reg = <0x43D40000 0x6000>;
+		interrupt-parent = <&intc>;
+		interrupts = < 0 55 4 >;
+
+		background-layer-bits-per-pixel = <32>;
+		background-layer-type = "rgb";
+		readable-regs;
+		size-position;
+		pixel-stride = <512>;
+
+		layer_0 {
+			//address = <0x3F800000>;
+  			//buffer-offset = <1024>;
+			bits-per-pixel = <32>;
+			type = "rgb";
+			transparency = "layer";
+		};
+
+		display-timings {
+				 320x240 {
+					hactive = <320>;
+					vactive = <240>;
+					clock-frequency = <30000000>;
+					hfront-porch = <200>;
+					hback-porch = <200>;
+					hsync-len = <5>;
+					vfront-porch = <200>;
+					vback-porch = <200>;
+					vsync-len = <50>;
+					};
+				};
+		};
+
+	xylon_fb@4 {
+		 compatible = "xylon,fb-3.00.a";
+		 device = <&logicvc4>;
+		 //video-mode = "320x240";
+		} ;
+
+	};
+};

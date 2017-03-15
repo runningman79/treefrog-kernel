@@ -51,6 +51,7 @@ obj-$(CONFIG_XILINX_TRAFGEN)	+= xilinx_trafgen.o
 obj-$(CONFIG_XILINX_VCU)	+= xlnx_vcu.o
 obj-$(CONFIG_XILINX_JESD204B)	+= jesd204b/
 obj-y				+= mic/
+obj-$(CONFIG_SI5338)		+= si5338.o
 obj-$(CONFIG_GENWQE)		+= genwqe/
 obj-$(CONFIG_ECHO)		+= echo/
 obj-$(CONFIG_VEXPRESS_SYSCFG)	+= vexpress-syscfg.o
