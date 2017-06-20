@@ -613,13 +613,6 @@
 				clock = <100000000>;
 		} ;
 
-		// simple irq test device
-		simple@0 {
-			 compatible = "none";
-			 interrupt-parent = <&intc>;
-			 interrupts = <0 56 1>;
-		};
-
 		logicvc0: logicvc@43D00000 {
 			compatible = "xylon,logicvc-4.00.a";
 			reg = <0x43D00000 0x6000>;

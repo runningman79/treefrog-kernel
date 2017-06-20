@@ -5,7 +5,14 @@
 
 / {
   amba {
-  	logicvc1: logicvc@43C40000 {
+	rcfpif1: rcfpif@83C10000 {
+		compatible = "quasonix,rcfpif-1.00.a";
+		interrupt-parent = <&intc>;
+		interrupts = < 0 56 1 >;
+		reg = <0x83C10000 0x6000>;
+	};
+
+	logicvc1: logicvc@43C40000 {
 		compatible = "xylon,logicvc-4.00.a";
 		reg = <0x43C40000 0x6000>;
 		interrupt-parent = <&intc>;
@@ -87,6 +94,7 @@
 		 //video-mode = "800x480";
 		 } ;
 	};
+
 };
 
 	
