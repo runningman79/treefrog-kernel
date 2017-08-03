@@ -426,5 +426,54 @@
 			reg = <0xf8005000 0x1000>;
 			timeout-sec = <10>;
 		};
+
+		logicvc0: logicvc@43D00000 {
+			compatible = "xylon,logicvc-4.00.a";
+			reg = <0x43D00000 0x6000>;
+			interrupt-parent = <&intc>;
+			interrupts = < 0 58 4 >;
+
+			background-layer-bits-per-pixel = <32>;
+			background-layer-type = "rgb";
+			hsync-active-low;
+			vsync-active-low;
+			readable-regs;
+			size-position;
+			pixel-stride = <2048>;
+			layer_0 {
+				//address = <0x3C000000>;
+	  			//buffer-offset = <1080>;
+				bits-per-pixel = <32>;
+				type = "rgb";
+				transparency = "layer";
+			};
+
+			display-timings {
+				native-mode = <&hd1080p>;
+				hd1080p: 1920x1080 {
+					 clock-frequency = <148500000>;
+					 hactive = <1920>;
+					 vactive = <1080>;
+					 hfront-porch = <88>;
+					 hback-porch = <148>;
+					 hsync-len = <44>;
+					 vfront-porch = <4>;
+					 vback-porch = <36>;
+					 vsync-len = <5>;
+				};
+			};
+
+		} ;
+
+		xylon_fb0: xylon_fb@0 {
+			 compatible = "xylon,fb-3.00.a";
+			status = "disabled";
+			 device = <&logicvc0>;
+			 //edid-video-mode;
+			 //edid-print;
+			 //vsync-irq;
+			 //video-mode = "1920x1080";
+		} ;
+
 	};
 };

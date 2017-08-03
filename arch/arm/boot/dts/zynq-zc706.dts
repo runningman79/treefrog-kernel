@@ -32,7 +32,7 @@
 	};
 
 	chosen {
-		bootargs = "";
+		bootargs = "console=tty0 console=ttyPS0,115200 root=/dev/mmcblk0p2 rw earlyprintk ipv6.disable=1 consoleblank=0 rootwait";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -98,14 +98,45 @@
 			#size-cells = <0>;
 			reg = <1>;
 			adv7511: hdmi-tx@39 {
-				compatible = "adi,adv7511";
-				reg = <0x39>;
-				adi,input-depth = <8>;
-				adi,input-colorspace = "yuv422";
-				adi,input-clock = "1x";
-				adi,input-style = <3>;
-				adi,input-justification = "evenly";
-			};
+				compatible = "adv7511";
+	       	       		   reg = <0x39>;
+		      		   interrupts = <0 31 4>;
+               	       		   interrupt-parent = <&intc>;
+	       	       		   dma-request = <&logicvc0>;
+               	       		   edid-addr = <0x50>;
+               	       		   video-input {
+	       		   	    		 input-id = <1>;
+                  	   			 input-style = <3>;
+                           			 input-color-depth = <8>;
+                           			 bit-justification = <0>;
+                           			 hsync-polarity = <0>;
+                           			 vsync-polarity = <0>;
+                           			 clock-delay = <3>;
+	      		   			 };
+              	       		   video-output {
+              		   	   		hdmi-mode = <0>;
+                           			output-format = <0>;
+                           			output-color-space = <0>;
+                           			up-conversion = <0>;
+                           			csc-enable = <1>;
+                           			csc-scaling-factor = <2>;
+                           			csc-coefficients {
+			   	   			a1 = <0x0B37>;
+			   	   			a2 = <0x0800>;
+				   			a3 = <0x0000>;
+				   			a4 = <0x1A86>;
+				   			b1 = <0x1A49>;
+				   			b2 = <0x0800>;
+				   			b3 = <0x1D3F>;
+				   			b4 = <0x0422>;
+				   			c1 = <0x0000>;
+				   			c2 = <0x0800>;
+				   			c3 = <0x0E2D>;
+				   			c4 = <0x1914>;
+                           	   			};
+              		   			};
+
+				};
 		};
 
 		i2c@2 {
@@ -371,4 +402,9 @@
 	usb-phy = <&usb_phy0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usb0_default>;
+};
+
+&xylon_fb0 {
+	status = "okay";
+	clocks = <&si570>;
 };

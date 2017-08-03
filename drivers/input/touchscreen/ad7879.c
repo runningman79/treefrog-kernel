@@ -577,7 +577,7 @@ struct ad7879 *ad7879_probe(struct device *dev, u8 devid, unsigned int irq,
 	__set_bit(ABS_PRESSURE, input_dev->absbit);
 
 	__set_bit(EV_KEY, input_dev->evbit);
-	__set_bit(BTN_TOUCH, input_dev->keybit);
+	__set_bit(BTN_LEFT, input_dev->keybit);
 
 	if (pdata) {
 		input_set_abs_params(input_dev, ABS_X,
