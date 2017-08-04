@@ -105,10 +105,10 @@
 	       	       		   dma-request = <&logicvc0>;
                	       		   edid-addr = <0x50>;
                	       		   video-input {
-	       		   	    		 input-id = <1>;
-                  	   			 input-style = <3>;
+	       		   	    		 input-id = <0>;
+                  	   			 //input-style = <0>;
                            			 input-color-depth = <8>;
-                           			 bit-justification = <0>;
+                           			 //bit-justification = <0>;
                            			 hsync-polarity = <0>;
                            			 vsync-polarity = <0>;
                            			 clock-delay = <3>;
