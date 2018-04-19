@@ -5,6 +5,13 @@
 
 / {
   amba {
+	rcfpif1: rcfpif@83c10000 {
+		status = "disabled";
+		compatible = "quasonix,rcfpif-1.00.a";
+		interrupt-parent = <&intc>;
+		interrupts = < 0 56 1 >;
+		reg = <0x83C10000 0x6000>;
+	};
 	logicvc1: logicvc@43d10000 {
 		compatible = "xylon,logicvc-4.00.a";
 		reg = <0x43D10000 0x6000>;

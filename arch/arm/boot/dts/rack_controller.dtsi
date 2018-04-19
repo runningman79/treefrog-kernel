@@ -584,7 +584,7 @@
 				clock = <100000000>;
 		} ;
 
-		// front panel proxy app if uart
+		// front panel proxy app if uart -- connected to AUX uart on 1U
 		axi_uartlite_fp_proxy_app_if: serial@82c20000 {
 				compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
 				reg = <0x82c20000 0x10000>;
@@ -593,30 +593,14 @@
 				clock = <100000000>;
 		} ;
 
-		// rev C EVTM uart
-		axi_uartlite_evtm: serial@82c40000 {
+		// rev C J24 uart
+		axi_uartlite_j24: serial@82c40000 {
 				compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
 				reg = <0x82c40000 0x10000>;
 				interrupt-parent = <&intc>;
 				interrupts = <0 34 1>;
 				clock = <100000000>;
 		} ;
-
-		// rev C AUX uart
-		axi_uartlite_aux: serial@82c30000 {
-				compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
-				reg = <0x82c30000 0x10000>;
-				interrupt-parent = <&intc>;
-				interrupts = <0 35 1>;
-				clock = <100000000>;
-		} ;
-
-		// simple irq test device
-		//simple@0 {
-		//	 compatible = "none";
-		//	 interrupt-parent = <&intc>;
-		//	 interrupts = <0 56 1>;
-		//};
 
 		logicvc0: logicvc@43d00000 {
 			compatible = "xylon,logicvc-4.00.a";
