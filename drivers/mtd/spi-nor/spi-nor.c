@@ -1688,14 +1688,17 @@ static int set_quad_mode(struct spi_nor *nor, const struct flash_info *info)
 	switch (JEDEC_MFR(info)) {
 	case SNOR_MFR_MACRONIX:
 		status = macronix_quad_enable(nor);
+		printk("SNOR_MFR_MICRONIX*******\n");
 		if (status) {
 			dev_err(nor->dev, "Macronix quad-read not enabled\n");
 			return -EINVAL;
 		}
 		return status;
 	case SNOR_MFR_MICRON:
+		printk("SNOR_MFR_MICRON*******\n");
 		return 0;
 	default:
+		printk("SPANSION****************\n");
 		status = spansion_quad_enable(nor);
 		if (status) {
 			dev_err(nor->dev, "Spansion quad-read not enabled\n");

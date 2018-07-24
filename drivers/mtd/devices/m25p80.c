@@ -242,6 +242,7 @@ static int m25p_probe(struct spi_device *spi)
 	else
 		flash_name = spi->modalias;
 
+	printk("***MODE = %d\n", mode);
 	ret = spi_nor_scan(nor, flash_name, mode);
 	if (ret)
 		return ret;

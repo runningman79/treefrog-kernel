@@ -327,7 +327,7 @@
                 compatible = "m25p80";
 				reg = <0x0>;
 				spi-tx-bus-width = <1>;
-				spi-rx-bus-width = <1>;
+				spi-rx-bus-width = <4>;
 				spi-max-frequency = <50000000>;
 				#address-cells = <1>;
 				#size-cells = <1>;
@@ -601,15 +601,6 @@
 				reg = <0x82c40000 0x10000>;
 				interrupt-parent = <&intc>;
 				interrupts = <0 34 1>;
-				clock = <100000000>;
-		} ;
-
-		// gpio uart -- J24 pins 1 (rxd) and 7 (txd)
-		axi_uartlite_gpio: serial@82c30000 {
-				compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
-				reg = <0x82c30000 0x10000>;
-				interrupt-parent = <&intc>;
-				interrupts = <0 35 1>;
 				clock = <100000000>;
 		} ;
 
