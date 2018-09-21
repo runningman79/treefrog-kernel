@@ -1012,6 +1012,7 @@ dtb-$(CONFIG_ARCH_ZYNQ) += \
 	zynq-zc770-xm013.dtb \
 	zynq-zed.dtb \
 	zynq-zybo.dtb \
+	node_controller.dtb \
 	rack_controller_1u.dtb \
 	rack_controller_3u.dtb
 dtb-$(CONFIG_MACH_ARMADA_370) += \
