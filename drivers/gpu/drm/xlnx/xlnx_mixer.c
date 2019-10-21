@@ -25,8 +25,10 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/dmaengine.h>
-#include "xlnx_drv.h"
+#include <video/videomode.h>
+#include "xlnx_bridge.h"
 #include "xlnx_crtc.h"
+#include "xlnx_drv.h"
 
 /**************************** Register Data **********************************/
 #define XVMIX_AP_CTRL			0x00000
@@ -71,15 +73,14 @@
 #define XVMIX_LOGOA_V_HIGH		0x40fff
 
 /************************** Constant Definitions *****************************/
-#define XVMIX_LOGO_EN			BIT(15)
-#define XVMIX_MASK_ENABLE_ALL_LAYERS	(GENMASK(8, 0) | XVMIX_LOGO_EN)
+#define XVMIX_LOGO_OFFSET		0x1000
 #define XVMIX_MASK_DISABLE_ALL_LAYERS   0x0
 #define XVMIX_REG_OFFSET                0x100
 #define XVMIX_MASTER_LAYER_IDX		0x0
 #define XVMIX_LOGO_LAYER_IDX		0x1
 #define XVMIX_DISP_MAX_WIDTH		4096
 #define XVMIX_DISP_MAX_HEIGHT		2160
-#define XVMIX_MAX_LAYERS		10
+#define XVMIX_MAX_OVERLAY_LAYERS	16
 #define XVMIX_MAX_BPC			16
 #define XVMIX_ALPHA_MIN			0
 #define XVMIX_ALPHA_MAX			256
@@ -141,8 +142,14 @@ static const u32 color_table[] = {
  * @XVMIX_LAYER_6: Layer 6
  * @XVMIX_LAYER_7: Layer 7
  * @XVMIX_LAYER_8: Layer 8
- * @XVMIX_LAYER_LOGO: Logo Layer
- * @XVMIX_LAYER_ALL: Layer count
+ * @XVMIX_LAYER_9: Layer 9
+ * @XVMIX_LAYER_10: Layer 10
+ * @XVMIX_LAYER_11: Layer 11
+ * @XVMIX_LAYER_12: Layer 12
+ * @XVMIX_LAYER_13: Layer 13
+ * @XVMIX_LAYER_14: Layer 14
+ * @XVMIX_LAYER_15: Layer 15
+ * @XVMIX_LAYER_16: Layer 16
  */
 enum xlnx_mix_layer_id {
 	XVMIX_LAYER_MASTER = 0,
@@ -154,8 +161,14 @@ enum xlnx_mix_layer_id {
 	XVMIX_LAYER_6,
 	XVMIX_LAYER_7,
 	XVMIX_LAYER_8,
-	XVMIX_LAYER_LOGO,
-	XVMIX_LAYER_ALL
+	XVMIX_LAYER_9,
+	XVMIX_LAYER_10,
+	XVMIX_LAYER_11,
+	XVMIX_LAYER_12,
+	XVMIX_LAYER_13,
+	XVMIX_LAYER_14,
+	XVMIX_LAYER_15,
+	XVMIX_LAYER_16
 };
 
 /**
@@ -183,7 +196,7 @@ enum xlnx_mix_layer_id {
  *  enable layer will be ignored.
  * @scale_fact: Current scaling factor applied to layer
  * @id: The logical layer id identifies which layer this struct describes
- *  (e.g. 0 = master, 1-7 = overlay).
+ *  (e.g. 0 = master, 1-15 = overlay).
  *
  * All mixer layers are reprsented by an instance of this struct:
  * output streaming, overlay, logo.
@@ -233,7 +246,7 @@ struct xlnx_mix_layer_data {
  * @max_layer_height: Max possible height for any layer on this Mixer
  * @max_logo_layer_width: Min possible width for any layer on this Mixer
  * @max_logo_layer_height: Min possible height for any layer on this Mixer
- * @max_layers: Max number of layers (excl: logo)
+ * @num_layers: Max number of layers (excl: logo)
  * @bg_layer_bpc: Bits per component for the background streaming layer
  * @dma_addr_size: dma address size in bits
  * @ppc: Pixels per component
@@ -241,6 +254,10 @@ struct xlnx_mix_layer_data {
  * @bg_color: Current RGB color value for internal background color generator
  * @layer_data: Array of layer data
  * @layer_cnt: Layer data array count
+ * @max_layers: Maximum number of layers supported by hardware
+ * @logo_layer_id: Index of logo layer
+ * @logo_en_mask: Mask used to enable logo layer
+ * @enable_all_mask: Mask used to enable all layers
  * @reset_gpio: GPIO line used to reset IP between modesetting operations
  * @intrpt_handler_fn: Interrupt handler function called when frame is completed
  * @intrpt_data: Data pointer passed to interrupt handler
@@ -259,7 +276,7 @@ struct xlnx_mix_hw {
 	u32                 max_layer_height;
 	u32                 max_logo_layer_width;
 	u32                 max_logo_layer_height;
-	u32                 max_layers;
+	u32                 num_layers;
 	u32                 bg_layer_bpc;
 	u32		    dma_addr_size;
 	u32                 ppc;
@@ -267,6 +284,10 @@ struct xlnx_mix_hw {
 	u64		    bg_color;
 	struct xlnx_mix_layer_data *layer_data;
 	u32 layer_cnt;
+	u32 max_layers;
+	u32 logo_layer_id;
+	u32 logo_en_mask;
+	u32 enable_all_mask;
 	struct gpio_desc *reset_gpio;
 	void (*intrpt_handler_fn)(void *);
 	void *intrpt_data;
@@ -294,6 +315,7 @@ struct xlnx_mix_hw {
  * @pixel_clock_enabled: pixel clock status
  * @dpms: mixer drm state
  * @event: vblank pending event
+ * @vtc_bridge: vtc_bridge structure
  *
  * Contains pointers to logical constructions such as the DRM plane manager as
  * well as pointers to distinquish the mixer layer serving as the DRM "primary"
@@ -322,6 +344,7 @@ struct xlnx_mix {
 	bool pixel_clock_enabled;
 	int dpms;
 	struct drm_pending_vblank_event *event;
+	struct xlnx_bridge *vtc_bridge;
 };
 
 /**
@@ -367,8 +390,8 @@ static inline void reg_writel(void __iomem *base, int offset, u32 val)
 
 static inline void reg_writeq(void __iomem *base, int offset, u64 val)
 {
-	writel(upper_32_bits(val), base + offset);
-	writel(lower_32_bits(val), base + offset + 4);
+	writel(lower_32_bits(val), base + offset);
+	writel(upper_32_bits(val), base + offset + 4);
 }
 
 static inline u32 reg_readl(void __iomem *base, int offset)
@@ -537,12 +560,12 @@ static bool is_window_valid(struct xlnx_mix_hw *mixer, u32 x_pos, u32 y_pos,
 /**
  *  xlnx_mix_layer_enable - Enables the requested layers
  * @mixer: Mixer instance in which to enable a video layer
- * @id: Logical id (e.g. 8 = logo layer) to enable
+ * @id: Logical id (e.g. 16 = logo layer) to enable
  *
  * Enables (permit video output) for layers in mixer
  * Enables the layer denoted by id in the IP core.
  * Layer 0 will indicate the background layer and layer 8 the logo
- * layer. Passing in the enum value XVMIX_LAYER_ALL will enable all
+ * layer. Passing max layers value will enable all
  */
 static void xlnx_mix_layer_enable(struct xlnx_mix_hw *mixer,
 				  enum xlnx_mix_layer_id id)
@@ -564,15 +587,15 @@ static void xlnx_mix_layer_enable(struct xlnx_mix_hw *mixer,
 		return; /* for inactive layers silently return */
 
 	/* Check if request is to enable all layers or single layer */
-	if (id == XVMIX_LAYER_ALL) {
+	if (id == mixer->max_layers) {
 		reg_writel(mixer->base, XVMIX_LAYERENABLE_DATA,
-			   XVMIX_MASK_ENABLE_ALL_LAYERS);
+			   mixer->enable_all_mask);
 
-	} else if ((id < mixer->layer_cnt) ||
-		   ((id == XVMIX_LAYER_LOGO) && mixer->logo_layer_en)) {
+	} else if ((id < mixer->layer_cnt) || ((id == mixer->logo_layer_id) &&
+		   mixer->logo_layer_en)) {
 		curr_state = reg_readl(mixer->base, XVMIX_LAYERENABLE_DATA);
-		if (id == XVMIX_LAYER_LOGO)
-			curr_state |= XVMIX_LOGO_EN;
+		if (id == mixer->logo_layer_id)
+			curr_state |= mixer->logo_en_mask;
 		else
 			curr_state |= BIT(id);
 		reg_writel(mixer->base, XVMIX_LAYERENABLE_DATA, curr_state);
@@ -598,7 +621,7 @@ static void xlnx_mix_disp_layer_enable(struct xlnx_mix_plane *plane)
 	mixer_hw = to_mixer_hw(plane);
 	l_data = plane->mixer_layer;
 	id = l_data->id;
-	if (id < XVMIX_LAYER_MASTER  || id > XVMIX_LAYER_LOGO) {
+	if (id < XVMIX_LAYER_MASTER  || id > mixer_hw->logo_layer_id) {
 		DRM_DEBUG_KMS("Attempt to activate invalid layer: %d\n", id);
 		return;
 	}
@@ -611,11 +634,11 @@ static void xlnx_mix_disp_layer_enable(struct xlnx_mix_plane *plane)
 /**
  * xlnx_mix_layer_disable - Disables the requested layer
  * @mixer:  Mixer for which the layer will be disabled
- * @id: Logical id of the layer to be disabled (0-8)
+ * @id: Logical id of the layer to be disabled (0-16)
  *
  * Disables the layer denoted by layer_id in the IP core.
- * Layer 0 will indicate the background layer and layer 8 the logo
- * layer. Passing in the enum value XVMIX_LAYER_ALL will disable all
+ * Layer 0 will indicate the background layer and layer 16 the logo
+ * layer. Passing the value of max layers will disable all
  * layers.
  */
 static void xlnx_mix_layer_disable(struct xlnx_mix_hw *mixer,
@@ -625,14 +648,14 @@ static void xlnx_mix_layer_disable(struct xlnx_mix_hw *mixer,
 
 	num_layers = mixer->layer_cnt;
 
-	if (id == XVMIX_LAYER_ALL) {
+	if (id == mixer->max_layers) {
 		reg_writel(mixer->base, XVMIX_LAYERENABLE_DATA,
 			   XVMIX_MASK_DISABLE_ALL_LAYERS);
 	} else if ((id < num_layers) ||
-		   ((id == XVMIX_LAYER_LOGO) && (mixer->logo_layer_en))) {
+		   ((id == mixer->logo_layer_id) && (mixer->logo_layer_en))) {
 		curr_state = reg_readl(mixer->base, XVMIX_LAYERENABLE_DATA);
-		if (id == XVMIX_LAYER_LOGO)
-			curr_state &= ~XVMIX_LOGO_EN;
+		if (id == mixer->logo_layer_id)
+			curr_state &= ~(mixer->logo_en_mask);
 		else
 			curr_state &= ~(BIT(id));
 		reg_writel(mixer->base, XVMIX_LAYERENABLE_DATA, curr_state);
@@ -657,7 +680,8 @@ static void xlnx_mix_disp_layer_disable(struct xlnx_mix_plane *plane)
 	else
 		return;
 	layer_id = plane->mixer_layer->id;
-	if (layer_id < XVMIX_LAYER_MASTER  || layer_id > XVMIX_LAYER_LOGO)
+	if (layer_id < XVMIX_LAYER_MASTER  ||
+	    layer_id > mixer_hw->logo_layer_id)
 		return;
 
 	xlnx_mix_layer_disable(mixer_hw, layer_id);
@@ -842,22 +866,23 @@ static int xlnx_mix_get_layer_scaling(struct xlnx_mix_hw *mixer,
 	u32 reg;
 	struct xlnx_mix_layer_data *l_data = xlnx_mix_get_layer_data(mixer, id);
 
-	switch (id) {
-	case XVMIX_LAYER_LOGO:
+	if (id == mixer->logo_layer_id) {
 		if (mixer->logo_layer_en) {
-			reg = XVMIX_LOGOSCALEFACTOR_DATA;
+			if (mixer->max_layers > XVMIX_MAX_OVERLAY_LAYERS)
+				reg = XVMIX_LOGOSCALEFACTOR_DATA +
+					XVMIX_LOGO_OFFSET;
+			else
+				reg = XVMIX_LOGOSCALEFACTOR_DATA;
 			scale_factor = reg_readl(mixer->base, reg);
 			l_data->layer_regs.scale_fact = scale_factor;
 		}
-		break;
-
-	default: /*Layer0-Layer7*/
-		if (id < XVMIX_LAYER_LOGO && l_data->hw_config.can_scale) {
+	} else {
+		/*Layer0-Layer15*/
+		if (id < mixer->logo_layer_id && l_data->hw_config.can_scale) {
 			reg = XVMIX_LAYERSCALE_0_DATA + (id * XVMIX_REG_OFFSET);
 			scale_factor = reg_readl(mixer->base, reg);
 			l_data->layer_regs.scale_fact = scale_factor;
 		}
-		break;
 	}
 	return scale_factor;
 }
@@ -865,7 +890,7 @@ static int xlnx_mix_get_layer_scaling(struct xlnx_mix_hw *mixer,
 /**
  * xlnx_mix_set_layer_window - Sets the position of an overlay layer
  * @mixer: Specific mixer object instance controlling the video
- * @id: Logical layer id (1-7) to be positioned
+ * @id: Logical layer id (1-15) to be positioned
  * @x_pos: new: Column to start display of overlay layer
  * @y_pos: new: Row to start display of overlay layer
  * @width: Number of active columns to dislay for overlay layer
@@ -873,7 +898,7 @@ static int xlnx_mix_get_layer_scaling(struct xlnx_mix_hw *mixer,
  * @stride: Width in bytes of overaly memory buffer (memory layer only)
  *
  * Sets the position of an overlay layer over the background layer (layer 0)
- * Applicable only for layers 1-7 or the logo layer
+ * Applicable only for layers 1-15 or the logo layer
  *
  * Return:
  * Zero on success, -EINVAL if position is invalid or -ENODEV if layer
@@ -897,8 +922,7 @@ static int xlnx_mix_set_layer_window(struct xlnx_mix_hw *mixer,
 	if (!is_window_valid(mixer, x_pos, y_pos, width, height, scale))
 		return status;
 
-	switch (id) {
-	case XVMIX_LAYER_LOGO:
+	if (id == mixer->logo_layer_id) {
 		if (!(mixer->logo_layer_en &&
 		      width <= l_data->hw_config.max_width &&
 		      height <= l_data->hw_config.max_height &&
@@ -906,10 +930,17 @@ static int xlnx_mix_set_layer_window(struct xlnx_mix_hw *mixer,
 		      width >= l_data->hw_config.min_width))
 			return status;
 
-		x_reg = XVMIX_LOGOSTARTX_DATA;
-		y_reg = XVMIX_LOGOSTARTY_DATA;
-		w_reg = XVMIX_LOGOWIDTH_DATA;
-		h_reg = XVMIX_LOGOHEIGHT_DATA;
+		if (mixer->max_layers > XVMIX_MAX_OVERLAY_LAYERS) {
+			x_reg = XVMIX_LOGOSTARTX_DATA + XVMIX_LOGO_OFFSET;
+			y_reg = XVMIX_LOGOSTARTY_DATA + XVMIX_LOGO_OFFSET;
+			w_reg = XVMIX_LOGOWIDTH_DATA + XVMIX_LOGO_OFFSET;
+			h_reg = XVMIX_LOGOHEIGHT_DATA + XVMIX_LOGO_OFFSET;
+		} else {
+			x_reg = XVMIX_LOGOSTARTX_DATA;
+			y_reg = XVMIX_LOGOSTARTY_DATA;
+			w_reg = XVMIX_LOGOWIDTH_DATA;
+			h_reg = XVMIX_LOGOHEIGHT_DATA;
+		}
 		reg_writel(mixer->base, x_reg, x_pos);
 		reg_writel(mixer->base, y_reg, y_pos);
 		reg_writel(mixer->base, w_reg, width);
@@ -919,9 +950,8 @@ static int xlnx_mix_set_layer_window(struct xlnx_mix_hw *mixer,
 		l_data->layer_regs.width = width;
 		l_data->layer_regs.height = height;
 		status = 0;
-		break;
-
-	default: /*Layer1-Layer7*/
+	} else {
+		 /*Layer1-Layer15*/
 
 		if (!(id < mixer->layer_cnt &&
 		      width <= l_data->hw_config.max_width &&
@@ -946,7 +976,6 @@ static int xlnx_mix_set_layer_window(struct xlnx_mix_hw *mixer,
 		if (!l_data->hw_config.is_streaming)
 			reg_writel(mixer->base, (s_reg + off), stride);
 		status = 0;
-		break;
 	}
 	return status;
 }
@@ -995,7 +1024,7 @@ static int xlnx_mix_set_layer_dimensions(struct xlnx_mix_plane *plane,
 			return ret;
 		xlnx_mix_layer_enable(mixer_hw, XVMIX_LAYER_MASTER);
 	}
-	if (layer_id != XVMIX_LAYER_MASTER && layer_id < XVMIX_LAYER_ALL) {
+	if (layer_id != XVMIX_LAYER_MASTER && layer_id < mixer_hw->max_layers) {
 		ret = xlnx_mix_set_layer_window(mixer_hw, layer_id, crtc_x,
 						crtc_y, width, height, stride);
 		if (ret)
@@ -1036,16 +1065,19 @@ static int xlnx_mix_set_layer_scaling(struct xlnx_mix_hw *mixer,
 	if (!is_window_valid(mixer, x_pos, y_pos, width, height, scale))
 		return -EINVAL;
 
-	switch (id) {
-	case XVMIX_LAYER_LOGO:
+	if (id == mixer->logo_layer_id) {
 		if (mixer->logo_layer_en) {
-			reg_writel(reg, XVMIX_LOGOSCALEFACTOR_DATA, scale);
+			if (mixer->max_layers > XVMIX_MAX_OVERLAY_LAYERS)
+				reg_writel(reg, XVMIX_LOGOSCALEFACTOR_DATA +
+					   XVMIX_LOGO_OFFSET, scale);
+			else
+				reg_writel(reg, XVMIX_LOGOSCALEFACTOR_DATA,
+					   scale);
 			l_data->layer_regs.scale_fact = scale;
 			status = 0;
 		}
-		break;
-
-	default: /* Layer0-Layer7 */
+	} else {
+		 /* Layer0-Layer15 */
 		if (id < mixer->layer_cnt && l_data->hw_config.can_scale) {
 			offset = id * XVMIX_REG_OFFSET;
 
@@ -1054,7 +1086,6 @@ static int xlnx_mix_set_layer_scaling(struct xlnx_mix_hw *mixer,
 			l_data->layer_regs.scale_fact = scale;
 			status = 0;
 		}
-		break;
 	}
 	return status;
 }
@@ -1114,17 +1145,19 @@ static int xlnx_mix_set_layer_alpha(struct xlnx_mix_hw *mixer,
 	int status = -EINVAL;
 
 	layer_data = xlnx_mix_get_layer_data(mixer, layer_id);
-	switch (layer_id) {
-	case XVMIX_LAYER_LOGO:
+
+	if (layer_id == mixer->logo_layer_id) {
 		if (mixer->logo_layer_en) {
-			reg = XVMIX_LOGOALPHA_DATA;
+			if (mixer->max_layers > XVMIX_MAX_OVERLAY_LAYERS)
+				reg = XVMIX_LOGOALPHA_DATA + XVMIX_LOGO_OFFSET;
+			else
+				reg = XVMIX_LOGOALPHA_DATA;
 			reg_writel(mixer->base, reg, alpha);
 			layer_data->layer_regs.alpha = alpha;
 			status = 0;
 		}
-		break;
-
-	default: /*Layer1-Layer7*/
+	} else {
+		 /*Layer1-Layer15*/
 		if (layer_id < mixer->layer_cnt &&
 		    layer_data->hw_config.can_alpha) {
 			u32 offset =  layer_id * XVMIX_REG_OFFSET;
@@ -1134,7 +1167,6 @@ static int xlnx_mix_set_layer_alpha(struct xlnx_mix_hw *mixer,
 			layer_data->layer_regs.alpha = alpha;
 			status = 0;
 		}
-		break;
 	}
 	return status;
 }
@@ -1176,7 +1208,8 @@ static int xlnx_mix_disp_set_layer_alpha(struct xlnx_mix_plane *plane,
  */
 static int xlnx_mix_set_layer_buff_addr(struct xlnx_mix_hw *mixer,
 					enum xlnx_mix_layer_id id,
-					u64 luma_addr, u64 chroma_addr)
+					dma_addr_t luma_addr,
+					dma_addr_t chroma_addr)
 {
 	struct xlnx_mix_layer_data *layer_data;
 	u32 align, offset;
@@ -1313,8 +1346,81 @@ xlnx_mix_disp_plane_atomic_get_property(struct drm_plane *base_plane,
 	return 0;
 }
 
+/**
+ * xlnx_mix_disp_plane_atomic_update_plane - plane update using atomic
+ * @plane: plane object to update
+ * @crtc: owning CRTC of owning plane
+ * @fb: framebuffer to flip onto plane
+ * @crtc_x: x offset of primary plane on crtc
+ * @crtc_y: y offset of primary plane on crtc
+ * @crtc_w: width of primary plane rectangle on crtc
+ * @crtc_h: height of primary plane rectangle on crtc
+ * @src_x: x offset of @fb for panning
+ * @src_y: y offset of @fb for panning
+ * @src_w: width of source rectangle in @fb
+ * @src_h: height of source rectangle in @fb
+ * @ctx: lock acquire context
+ *
+ * Provides a default plane update handler using the atomic driver interface.
+ *
+ * RETURNS:
+ * Zero on success, error code on failure
+ */
+static int
+xlnx_mix_disp_plane_atomic_update_plane(struct drm_plane *plane,
+					struct drm_crtc *crtc,
+					struct drm_framebuffer *fb,
+					int crtc_x, int crtc_y,
+					unsigned int crtc_w,
+					unsigned int crtc_h,
+					uint32_t src_x, uint32_t src_y,
+					uint32_t src_w, uint32_t src_h,
+					struct drm_modeset_acquire_ctx *ctx)
+{
+	struct drm_atomic_state *state;
+	struct drm_plane_state *plane_state;
+	int ret = 0;
+
+	state = drm_atomic_state_alloc(plane->dev);
+	if (!state)
+		return -ENOMEM;
+
+	state->acquire_ctx = ctx;
+	plane_state = drm_atomic_get_plane_state(state, plane);
+	if (IS_ERR(plane_state)) {
+		ret = PTR_ERR(plane_state);
+		goto fail;
+	}
+
+	ret = drm_atomic_set_crtc_for_plane(plane_state, crtc);
+	if (ret != 0)
+		goto fail;
+
+	drm_atomic_set_fb_for_plane(plane_state, fb);
+	plane_state->crtc_x = crtc_x;
+	plane_state->crtc_y = crtc_y;
+	plane_state->crtc_w = crtc_w;
+	plane_state->crtc_h = crtc_h;
+	plane_state->src_x = src_x;
+	plane_state->src_y = src_y;
+	plane_state->src_w = src_w;
+	plane_state->src_h = src_h;
+
+	if (plane == crtc->cursor)
+		state->legacy_cursor_update = true;
+
+	/* Do async-update if possible */
+	state->async_update = !drm_atomic_helper_async_check(plane->dev, state);
+
+	ret = drm_atomic_commit(state);
+
+fail:
+	drm_atomic_state_put(state);
+	return ret;
+}
+
 static struct drm_plane_funcs xlnx_mix_plane_funcs = {
-	.update_plane	= drm_atomic_helper_update_plane,
+	.update_plane	= xlnx_mix_disp_plane_atomic_update_plane,
 	.disable_plane	= drm_atomic_helper_disable_plane,
 	.atomic_set_property	= xlnx_mix_disp_plane_atomic_set_property,
 	.atomic_get_property	= xlnx_mix_disp_plane_atomic_get_property,
@@ -1353,7 +1459,7 @@ static int xlnx_mix_logo_load(struct xlnx_mix_hw *mixer, u32 logo_w, u32 logo_h,
 	u32 width, height, curr_x_pos, curr_y_pos;
 	u32 rbase_addr, gbase_addr, bbase_addr, abase_addr;
 
-	layer_data = xlnx_mix_get_layer_data(mixer, XVMIX_LAYER_LOGO);
+	layer_data = xlnx_mix_get_layer_data(mixer, mixer->logo_layer_id);
 	rword = 0;
 	gword = 0;
 	bword = 0;
@@ -1397,8 +1503,9 @@ static int xlnx_mix_logo_load(struct xlnx_mix_hw *mixer, u32 logo_w, u32 logo_h,
 
 	curr_x_pos = layer_data->layer_regs.x_pos;
 	curr_y_pos = layer_data->layer_regs.y_pos;
-	return xlnx_mix_set_layer_window(mixer, XVMIX_LAYER_LOGO, curr_x_pos,
-					 curr_y_pos, logo_w, logo_h, 0);
+	return xlnx_mix_set_layer_window(mixer, mixer->logo_layer_id,
+					 curr_x_pos, curr_y_pos,
+					 logo_w, logo_h, 0);
 }
 
 static int xlnx_mix_update_logo_img(struct xlnx_mix_plane *plane,
@@ -1406,6 +1513,7 @@ static int xlnx_mix_update_logo_img(struct xlnx_mix_plane *plane,
 				     u32 src_w, u32 src_h)
 {
 	struct xlnx_mix_layer_data *logo_layer = plane->mixer_layer;
+	struct xlnx_mix_hw *mixer = to_mixer_hw(plane);
 	size_t pixel_cnt = src_h * src_w;
 	/* color comp defaults to offset in RG24 buffer */
 	u32 pix_cmp_cnt;
@@ -1424,7 +1532,7 @@ static int xlnx_mix_update_logo_img(struct xlnx_mix_plane *plane,
 	int ret, i, j;
 
 	/* ensure valid conditions for update */
-	if (logo_layer->id != XVMIX_LAYER_LOGO)
+	if (logo_layer->id != mixer->logo_layer_id)
 		return 0;
 
 	if (src_h > max_height || src_w > max_width ||
@@ -1515,7 +1623,7 @@ static int xlnx_mix_set_plane(struct xlnx_mix_plane *plane,
 	struct xlnx_mix *mixer;
 	struct drm_gem_cma_object *luma_buffer;
 	u32 luma_stride = fb->pitches[0];
-	u64 luma_addr, chroma_addr = 0;
+	dma_addr_t luma_addr, chroma_addr = 0;
 	u32 active_area_width;
 	u32 active_area_height;
 	enum xlnx_mix_layer_id layer_id;
@@ -1549,22 +1657,11 @@ static int xlnx_mix_set_plane(struct xlnx_mix_plane *plane,
 		return ret;
 
 	switch (layer_id) {
-	case XVMIX_LAYER_LOGO:
-		ret = xlnx_mix_update_logo_img(plane, luma_buffer,
-					       src_w, src_h);
-		if (ret)
-			break;
-
-		ret = xlnx_mix_set_layer_dimensions(plane, crtc_x, crtc_y,
-						    src_w, src_h, luma_stride);
-		break;
-
 	case XVMIX_LAYER_MASTER:
 		if (!plane->mixer_layer->hw_config.is_streaming)
 			xlnx_mix_mark_layer_inactive(plane);
 		if (mixer->drm_primary_layer == mixer->hw_master_layer) {
 			xlnx_mix_layer_disable(mixer_hw, layer_id);
-			msleep(50);
 			ret = xlnx_mix_set_active_area(mixer_hw, src_w, src_h);
 			if (ret)
 				return ret;
@@ -1582,12 +1679,15 @@ static int xlnx_mix_set_plane(struct xlnx_mix_plane *plane,
 						    src_w, src_h, luma_stride);
 		if (ret)
 			break;
-
-		if (!plane->mixer_layer->hw_config.is_streaming)
-			ret = xlnx_mix_set_layer_buff_addr
-						(mixer_hw,
-						 plane->mixer_layer->id,
-						 luma_addr, chroma_addr);
+		if (layer_id == mixer_hw->logo_layer_id) {
+			ret = xlnx_mix_update_logo_img(plane, luma_buffer,
+						       src_w, src_h);
+		} else {
+			if (!plane->mixer_layer->hw_config.is_streaming)
+				ret = xlnx_mix_set_layer_buff_addr
+					(mixer_hw, plane->mixer_layer->id,
+					 luma_addr, chroma_addr);
+		}
 	}
 	return ret;
 }
@@ -1666,13 +1766,36 @@ static void xlnx_mix_plane_cleanup_fb(struct drm_plane *plane,
 static int xlnx_mix_plane_atomic_check(struct drm_plane *plane,
 				       struct drm_plane_state *state)
 {
-	return 0;
+	int scale;
+	struct xlnx_mix_plane *mix_plane = to_xlnx_plane(plane);
+	struct xlnx_mix_hw *mixer_hw = to_mixer_hw(mix_plane);
+	struct xlnx_mix *mix;
+
+	/* No check required for the drm_primary_plane */
+	mix = container_of(mixer_hw, struct xlnx_mix, mixer_hw);
+	if (mix->drm_primary_layer == mix_plane)
+		return 0;
+
+	scale = xlnx_mix_get_layer_scaling(mixer_hw,
+					   mix_plane->mixer_layer->id);
+	if (is_window_valid(mixer_hw, state->crtc_x, state->crtc_y,
+			    state->src_w >> 16, state->src_h >> 16, scale))
+		return 0;
+
+	return -EINVAL;
 }
 
 static void xlnx_mix_plane_atomic_update(struct drm_plane *plane,
 					 struct drm_plane_state *old_state)
 {
 	int ret;
+
+	if (!plane->state->crtc || !plane->state->fb)
+		return;
+
+	if (old_state->fb &&
+	    old_state->fb->format->format != plane->state->fb->format->format)
+		xlnx_mix_plane_dpms(plane, DRM_MODE_DPMS_OFF);
 
 	ret = xlnx_mix_plane_mode_set(plane, plane->state->fb,
 				      plane->state->crtc_x,
@@ -1699,12 +1822,43 @@ static void xlnx_mix_plane_atomic_disable(struct drm_plane *plane,
 	xlnx_mix_plane_dpms(plane, DRM_MODE_DPMS_OFF);
 }
 
+static int xlnx_mix_plane_atomic_async_check(struct drm_plane *plane,
+					     struct drm_plane_state *state)
+{
+	return 0;
+}
+
+static void
+xlnx_mix_plane_atomic_async_update(struct drm_plane *plane,
+				   struct drm_plane_state *new_state)
+{
+	struct drm_plane_state *old_state =
+		drm_atomic_get_old_plane_state(new_state->state, plane);
+
+	/* Update the current state with new configurations */
+	drm_atomic_set_fb_for_plane(plane->state, new_state->fb);
+	plane->state->crtc = new_state->crtc;
+	plane->state->crtc_x = new_state->crtc_x;
+	plane->state->crtc_y = new_state->crtc_y;
+	plane->state->crtc_w = new_state->crtc_w;
+	plane->state->crtc_h = new_state->crtc_h;
+	plane->state->src_x = new_state->src_x;
+	plane->state->src_y = new_state->src_y;
+	plane->state->src_w = new_state->src_w;
+	plane->state->src_h = new_state->src_h;
+	plane->state->state = new_state->state;
+
+	xlnx_mix_plane_atomic_update(plane, old_state);
+}
+
 static const struct drm_plane_helper_funcs xlnx_mix_plane_helper_funcs = {
 	.prepare_fb	= xlnx_mix_plane_prepare_fb,
 	.cleanup_fb	= xlnx_mix_plane_cleanup_fb,
 	.atomic_check	= xlnx_mix_plane_atomic_check,
 	.atomic_update	= xlnx_mix_plane_atomic_update,
 	.atomic_disable	= xlnx_mix_plane_atomic_disable,
+	.atomic_async_check = xlnx_mix_plane_atomic_async_check,
+	.atomic_async_update = xlnx_mix_plane_atomic_async_update,
 };
 
 static int xlnx_mix_init_plane(struct xlnx_mix_plane *plane,
@@ -1840,7 +1994,7 @@ static int xlnx_mix_parse_dt_logo_data(struct device_node *node,
 	layer_data->hw_config.can_scale = true;
 	layer_data->layer_regs.buff_addr1 = 0;
 	layer_data->layer_regs.buff_addr2 = 0;
-	layer_data->id = XVMIX_LAYER_LOGO;
+	layer_data->id = mixer_hw->logo_layer_id;
 
 	if (of_property_read_u32(logo_node, "xlnx,logo-width", &max_width)) {
 		DRM_ERROR("Failed to get logo width prop\n");
@@ -1877,7 +2031,7 @@ static int xlnx_mix_dt_parse(struct device *dev, struct xlnx_mix *mixer)
 {
 	struct xlnx_mix_plane *planes;
 	struct xlnx_mix_hw *mixer_hw;
-	struct device_node *node;
+	struct device_node *node, *vtc_node;
 	struct xlnx_mix_layer_data *l_data;
 	struct resource	res;
 	int ret, l_cnt, i;
@@ -1909,13 +2063,26 @@ static int xlnx_mix_dt_parse(struct device *dev, struct xlnx_mix *mixer)
 		dev_err(dev, "Failed to map io mem space for mixer\n");
 		return PTR_ERR(mixer_hw->base);
 	}
+	if (of_device_is_compatible(dev->of_node, "xlnx,mixer-4.0")) {
+		mixer_hw->max_layers = 18;
+		mixer_hw->logo_en_mask = BIT(23);
+		mixer_hw->enable_all_mask = (GENMASK(16, 0) |
+						mixer_hw->logo_en_mask);
+	} else {
+		mixer_hw->max_layers = 10;
+		mixer_hw->logo_en_mask = BIT(15);
+		mixer_hw->enable_all_mask = (GENMASK(8, 0) |
+						mixer_hw->logo_en_mask);
+	}
+
 	ret = of_property_read_u32(node, "xlnx,num-layers",
-				   &mixer_hw->max_layers);
+				   &mixer_hw->num_layers);
 	if (ret) {
 		dev_err(dev, "No xlnx,num-layers dts prop for mixer node\n");
 		return ret;
 	}
-	if (mixer_hw->max_layers > XVMIX_MAX_LAYERS) {
+	mixer_hw->logo_layer_id = mixer_hw->max_layers - 1;
+	if (mixer_hw->num_layers > mixer_hw->max_layers) {
 		dev_err(dev, "Num layer nodes in device tree > mixer max\n");
 		return -EINVAL;
 	}
@@ -1929,9 +2096,22 @@ static int xlnx_mix_dt_parse(struct device *dev, struct xlnx_mix *mixer)
 		dev_err(dev, "invalid addr-width dts prop\n");
 		return -EINVAL;
 	}
+
+	/* VTC Bridge support */
+	vtc_node = of_parse_phandle(node, "xlnx,bridge", 0);
+	if (vtc_node) {
+		mixer->vtc_bridge = of_xlnx_bridge_get(vtc_node);
+		if (!mixer->vtc_bridge) {
+			dev_info(dev, "Didn't get vtc bridge instance\n");
+			return -EPROBE_DEFER;
+		}
+	} else {
+		dev_info(dev, "vtc bridge property not present\n");
+	}
+
 	mixer_hw->logo_layer_en = of_property_read_bool(node,
 							"xlnx,logo-layer");
-	l_cnt = mixer_hw->max_layers + (mixer_hw->logo_layer_en ? 1 : 0);
+	l_cnt = mixer_hw->num_layers + (mixer_hw->logo_layer_en ? 1 : 0);
 	mixer_hw->layer_cnt = l_cnt;
 
 	l_data = devm_kzalloc(dev, sizeof(*l_data) * l_cnt, GFP_KERNEL);
@@ -1951,9 +2131,11 @@ static int xlnx_mix_dt_parse(struct device *dev, struct xlnx_mix *mixer)
 	ret = xlnx_mix_parse_dt_bg_video_fmt(node, mixer_hw);
 	if (ret)
 		return ret;
-	/* read logo data from dts */
-	ret = xlnx_mix_parse_dt_logo_data(node, mixer_hw);
+	if (mixer_hw->logo_layer_en) {
+		/* read logo data from dts */
+		ret = xlnx_mix_parse_dt_logo_data(node, mixer_hw);
 		return ret;
+	}
 	return 0;
 }
 
@@ -1985,7 +2167,7 @@ static int xlnx_mix_of_init_layer(struct device *dev, struct device_node *node,
 		dev_err(dev, "xlnx,layer-id property not found\n");
 		return ret;
 	}
-	if (layer->id < 1 || layer->id >= XVMIX_MAX_LAYERS) {
+	if (layer->id < 1 || layer->id >= mixer->mixer_hw.max_layers) {
 		dev_err(dev, "Mixer layer id %u in dts is out of legal range\n",
 			layer->id);
 		return -EINVAL;
@@ -2088,7 +2270,7 @@ static int xlnx_mix_plane_create(struct device *dev, struct xlnx_mix *mixer)
 			return ret;
 	}
 	layer_idx = mixer_hw->logo_layer_en ? 2 : 1;
-	for (i = 1; i < mixer_hw->max_layers; i++, layer_idx++) {
+	for (i = 1; i < mixer_hw->num_layers; i++, layer_idx++) {
 		snprintf(name, sizeof(name), "layer_%d", i);
 		ret = xlnx_mix_of_init_layer(dev, node, name,
 					     &mixer_hw->layer_data[layer_idx],
@@ -2221,6 +2403,8 @@ static void xlnx_mix_crtc_dpms(struct drm_crtc *base_crtc, int dpms)
 	struct xlnx_crtc *crtc = to_xlnx_crtc(base_crtc);
 	struct xlnx_mix *mixer = to_xlnx_mixer(crtc);
 	int ret;
+	struct videomode vm;
+	struct drm_display_mode *mode = &base_crtc->mode;
 
 	DRM_DEBUG_KMS("dpms: %d\n", dpms);
 	if (mixer->dpms == dpms)
@@ -2238,12 +2422,19 @@ static void xlnx_mix_crtc_dpms(struct drm_crtc *base_crtc, int dpms)
 		}
 		mixer->pixel_clock_enabled = true;
 
+		if (mixer->vtc_bridge) {
+			drm_display_mode_to_videomode(mode, &vm);
+			xlnx_bridge_set_timing(mixer->vtc_bridge, &vm);
+			xlnx_bridge_enable(mixer->vtc_bridge);
+		}
+
 		xlnx_mix_dpms(mixer, dpms);
 		xlnx_mix_plane_dpms(base_crtc->primary, dpms);
 		break;
 	default:
 		xlnx_mix_plane_dpms(base_crtc->primary, dpms);
 		xlnx_mix_dpms(mixer, dpms);
+		xlnx_bridge_disable(mixer->vtc_bridge);
 		if (mixer->pixel_clock_enabled) {
 			clk_disable_unprepare(mixer->pixel_clock);
 			mixer->pixel_clock_enabled = false;
@@ -2353,7 +2544,15 @@ static void
 xlnx_mix_crtc_atomic_enable(struct drm_crtc *crtc,
 			    struct drm_crtc_state *old_crtc_state)
 {
+	struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
+	int vrefresh;
+
 	xlnx_mix_crtc_dpms(crtc, DRM_MODE_DPMS_ON);
+
+	/* Delay of 3 vblank interval for timing gen to be stable */
+	vrefresh = ((adjusted_mode->clock * 1000) /
+		    (adjusted_mode->vtotal * adjusted_mode->htotal));
+	msleep(3 * 1000 / vrefresh);
 }
 
 /**
@@ -2494,7 +2693,7 @@ static void xlnx_mix_init(struct xlnx_mix_hw *mixer)
 	struct xlnx_mix_layer_data *layer_data;
 
 	layer_data = xlnx_mix_get_layer_data(mixer, XVMIX_LAYER_MASTER);
-	xlnx_mix_layer_disable(mixer, XVMIX_LAYER_ALL);
+	xlnx_mix_layer_disable(mixer, mixer->max_layers);
 	xlnx_mix_set_active_area(mixer, layer_data->hw_config.max_width,
 				 layer_data->hw_config.max_height);
 	/* default to blue */
@@ -2592,13 +2791,24 @@ static int xlnx_mix_remove(struct platform_device *pdev)
 {
 	struct xlnx_mix *mixer = platform_get_drvdata(pdev);
 
+	if (mixer->vtc_bridge)
+		of_xlnx_bridge_put(mixer->vtc_bridge);
 	xlnx_drm_pipeline_exit(mixer->master);
 	component_del(&pdev->dev, &xlnx_mix_component_ops);
 	return 0;
 }
 
+/*
+ * TODO:
+ * In Mixer IP core version 4.0, layer enable bits and logo layer offsets
+ * have been changed. To provide backward compatibility number of max layers
+ * field has been taken to differentiate IP versions.
+ * This logic will have to be changed properly using the IP core version.
+ */
+
 static const struct of_device_id xlnx_mix_of_match[] = {
 	{ .compatible = "xlnx,mixer-3.0", },
+	{ .compatible = "xlnx,mixer-4.0", },
 	{ /* end of table */ },
 };
 MODULE_DEVICE_TABLE(of, xlnx_mix_of_match);

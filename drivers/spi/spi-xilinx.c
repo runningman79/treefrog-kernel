@@ -81,6 +81,9 @@
 /* Auto suspend timeout in milliseconds */
 #define SPI_AUTOSUSPEND_TIMEOUT		3000
 
+/* Command used for Dummy read Id */
+#define SPI_READ_ID		0x9F
+
 /**
  * struct xilinx_spi - This definition define spi driver instance
  * @regs:		virt. address of the control registers
@@ -88,6 +91,7 @@
  * @axi_clk:		Pointer to the AXI clock
  * @axi4_clk:		Pointer to the AXI4 clock
  * @spi_clk:		Pointer to the SPI clock
+ * @dev:		Pointer to the device
  * @rx_ptr:		Pointer to the RX buffer
  * @tx_ptr:		Pointer to the TX buffer
  * @bytes_per_word:	Number of bytes in a word
@@ -107,6 +111,7 @@ struct xilinx_spi {
 	struct clk *axi_clk;
 	struct clk *axi4_clk;
 	struct clk *spi_clk;
+	struct device *dev;
 	u8 *rx_ptr;
 	const u8 *tx_ptr;
 	u8 bytes_per_word;
@@ -328,6 +333,55 @@ static irqreturn_t xilinx_spi_irq(int irq, void *dev_id)
 }
 
 /**
+ * xilinx_spi_startup_block - Perform a dummy read as a
+ * work around for the startup block issue in the spi controller.
+ * @xspi:	Pointer to the xilinx_spi structure
+ * @cs_num:	chip select number.
+ *
+ * Perform a dummy read if startup block is enabled in the
+ * spi controller.
+ *
+ * Return:	None
+ */
+static void xilinx_spi_startup_block(struct xilinx_spi *xspi, u32 cs_num)
+{
+	void __iomem *regs_base = xspi->regs;
+	u32 chip_sel, config_reg, status_reg;
+
+	/* Activate the chip select */
+	chip_sel = xspi->cs_inactive;
+	chip_sel ^= BIT(cs_num);
+	xspi->write_fn(chip_sel, regs_base + XSPI_SSR_OFFSET);
+
+	/* Write ReadId to the TXD register */
+	xspi->write_fn(SPI_READ_ID, regs_base + XSPI_TXD_OFFSET);
+	xspi->write_fn(0x0, regs_base + XSPI_TXD_OFFSET);
+	xspi->write_fn(0x0, regs_base + XSPI_TXD_OFFSET);
+
+	config_reg = xspi->read_fn(regs_base + XSPI_CR_OFFSET);
+	/* Enable master transaction  */
+	config_reg &= ~XSPI_CR_TRANS_INHIBIT;
+	xspi->write_fn(config_reg, regs_base + XSPI_CR_OFFSET);
+
+	status_reg = xspi->read_fn(regs_base + XSPI_SR_OFFSET);
+	while ((status_reg & XSPI_SR_TX_EMPTY_MASK) == 0)
+		status_reg = xspi->read_fn(regs_base + XSPI_SR_OFFSET);
+
+	/* Disable master transaction */
+	config_reg |= XSPI_CR_TRANS_INHIBIT;
+	xspi->write_fn(config_reg, regs_base + XSPI_CR_OFFSET);
+
+	/* Read the RXD Register */
+	status_reg = xspi->read_fn(regs_base + XSPI_SR_OFFSET);
+	while ((status_reg & XSPI_SR_RX_EMPTY_MASK) == 0) {
+		xspi->read_fn(regs_base + XSPI_RXD_OFFSET);
+		status_reg = xspi->read_fn(regs_base + XSPI_SR_OFFSET);
+	}
+
+	xspi_init_hw(xspi);
+}
+
+/**
  * xspi_setup_transfer - Configure SPI controller for specified
  *			 transfer
  * @qspi:	Pointer to the spi_device structure
@@ -376,16 +430,17 @@ static int xspi_setup_transfer(struct spi_device *qspi,
 static int xspi_setup(struct spi_device *qspi)
 {
 	int ret;
+	struct xilinx_spi *xqspi = spi_master_get_devdata(qspi->master);
 
 	if (qspi->master->busy)
 		return -EBUSY;
 
-	ret = pm_runtime_get_sync(&qspi->dev);
+	ret = pm_runtime_get_sync(xqspi->dev);
 	if (ret < 0)
 		return ret;
 
 	ret = xspi_setup_transfer(qspi, NULL);
-	pm_runtime_put_sync(&qspi->dev);
+	pm_runtime_put_sync(xqspi->dev);
 
 	return ret;
 }
@@ -453,10 +508,11 @@ static int xspi_start_transfer(struct spi_master *master,
 static int xspi_prepare_transfer_hardware(struct spi_master *master)
 {
 	struct xilinx_spi *xqspi = spi_master_get_devdata(master);
+
 	u32 cr;
 	int ret;
 
-	ret = pm_runtime_get_sync(&master->dev);
+	ret = pm_runtime_get_sync(xqspi->dev);
 	if (ret < 0)
 		return ret;
 
@@ -485,7 +541,7 @@ static int xspi_unprepare_transfer_hardware(struct spi_master *master)
 	cr &= ~XSPI_CR_ENABLE;
 	xqspi->write_fn(cr, xqspi->regs + XSPI_CR_OFFSET);
 
-	pm_runtime_put_sync(&master->dev);
+	pm_runtime_put_sync(xqspi->dev);
 
 	return 0;
 }
@@ -628,9 +684,11 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 	struct xilinx_spi *xspi;
 	struct resource *res;
 	int ret, num_cs = 0, bits_per_word = 8;
+	u32 cs_num;
 	struct spi_master *master;
 	struct device_node *nc;
 	u32 tmp, rx_bus_width, fifo_size;
+	bool startup_block;
 
 	of_property_read_u32(pdev->dev.of_node, "num-cs",
 				&num_cs);
@@ -641,6 +699,9 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Invalid number of spi slaves\n");
 		return -EINVAL;
 	}
+
+	startup_block = of_property_read_bool(pdev->dev.of_node,
+					      "xlnx,startup-block");
 
 	master = spi_alloc_master(&pdev->dev, sizeof(struct xilinx_spi));
 	if (!master)
@@ -668,6 +729,12 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 
 	xspi->rx_bus_width = XSPI_ONE_BITS_PER_WORD;
 	for_each_available_child_of_node(pdev->dev.of_node, nc) {
+		if (startup_block) {
+			ret = of_property_read_u32(nc, "reg",
+						   &cs_num);
+			if (ret < 0)
+				return -EINVAL;
+		}
 		ret = of_property_read_u32(nc, "spi-rx-bus-width",
 						&rx_bus_width);
 		if (!ret) {
@@ -743,6 +810,8 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 	if (ret < 0)
 		goto clk_unprepare_all;
 
+	xspi->dev = &pdev->dev;
+
 	xspi->read_fn = xspi_read32;
 	xspi->write_fn = xspi_write32;
 	/* Detect endianness on the IP via loop bit in CR register*/
@@ -800,6 +869,16 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 		goto clk_unprepare_all;
 	}
 	xspi->cs_inactive = 0xffffffff;
+
+	/*
+	 * This is the work around for the startup block issue in
+	 * the spi controller. SPI clock is passing through STARTUP
+	 * block to FLASH. STARTUP block don't provide clock as soon
+	 * as QSPI provides command. So first command fails.
+	 */
+	if (startup_block)
+		xilinx_spi_startup_block(xspi, cs_num);
+
 	ret = spi_register_master(master);
 	if (ret) {
 		dev_err(&pdev->dev, "spi_register_master failed\n");
@@ -858,6 +937,7 @@ static int xilinx_spi_remove(struct platform_device *pdev)
 MODULE_ALIAS("platform:" XILINX_SPI_NAME);
 
 static const struct of_device_id xilinx_spi_of_match[] = {
+	{ .compatible = "xlnx,axi-quad-spi-1.00.a", },
 	{ .compatible = "xlnx,xps-spi-2.00.a", },
 	{ .compatible = "xlnx,xps-spi-2.00.b", },
 	{}
