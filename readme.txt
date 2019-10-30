@@ -1,3 +1,6 @@
+Note - for RDMS I needed to add CROSS_COMPILE=arm-xilinx-linux-gnueabi- to each
+after using settings64.sh from Xilinx/SDK/2017.2
+
 ---------------- build instructions for the kernel
 
 1) make ARCH=arm mrproper
