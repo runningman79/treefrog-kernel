@@ -1,7 +1,6 @@
-Note - for RDMS I needed to add CROSS_COMPILE=arm-xilinx-linux-gnueabi- to each
-after using settings64.sh from Xilinx/SDK/2017.2
-
 ---------------- build instructions for the kernel
+
+0) export CROSS_COMPILE=arm-linux-gnueabihf-
 
 1) make ARCH=arm mrproper
 
@@ -14,6 +13,9 @@ after using settings64.sh from Xilinx/SDK/2017.2
 4) make ARCH=arm modules
 5) sudo env PATH=$PATH make ARCH=arm INSTALL_MOD_PATH=/<sdcard> modules_install
 6) make ARCH=arm dtbs
+
+Note for modules_install: rc_src/deploy now has a lib subdirectory. if you make modules_install
+with INSTALL_MOD_PATH set to a temp dir, you can copy the dir below (lib/modules/xxx) to deploy/
 
 =====================
 
