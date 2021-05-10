@@ -605,13 +605,13 @@
 		} ;
 
 		// rev C AUX uart
-		axi_uartlite_aux: serial@82c30000 {
-				compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
-				reg = <0x82c30000 0x10000>;
-				interrupt-parent = <&intc>;
-				interrupts = <0 35 1>;
-				clock = <100000000>;
-		} ;
+	//	axi_uartlite_aux: serial@82c30000 {
+	//			compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
+	//			reg = <0x82c30000 0x10000>;
+	//			interrupt-parent = <&intc>;
+	//			interrupts = <0 35 1>;
+	//			clock = <100000000>;
+	//	} ;
 
 		// simple irq test device
 		simple@0 {

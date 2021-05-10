@@ -1,5 +1,7 @@
 
 ------------------------------ build instructions for the kernel
+source <path to SDK 2018.3>/settings.sh
+
 export CROSS_COMPILE=arm-linux-gnueabihf-
 export ARCH=arm
 
